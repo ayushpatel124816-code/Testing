@@ -1,0 +1,103 @@
+import openpyxl
+from pathlib import Path
+
+INPUT_FILE = Path("excel_file.xlsx")
+OUTPUT_FILE = Path("Processed_Excel.xlsx")
+
+ACTION_1 = "Onboard the account in Cyberark or Delete it in Snow/DPR"
+
+
+def process_sheet(ws):
+    # Find the actual header row
+    header_row = None
+
+    for row in ws.iter_rows():
+        for cell in row:
+            if (
+                cell.value is not None
+                and str(cell.value).strip().lower() == "pamela live status"
+            ):
+                header_row = cell.row
+                break
+
+        if header_row:
+            break
+
+    if header_row is None:
+        raise ValueError(
+            f"'PAMELA LIVE STATUS' header not found in {ws.title}"
+        )
+
+    print(f"{ws.title}: header found at row {header_row}")
+
+    # Add two columns at the beginning
+    ws.insert_cols(1, 2)
+
+    # Add headers
+    ws.cell(header_row, 1).value = "Action 1"
+    ws.cell(header_row, 2).value = "Action 2"
+
+    # Process rows below header
+    for row_num in range(header_row + 1, ws.max_row + 1):
+
+        # Original data now starts from column 3
+        values = [
+            ws.cell(row_num, col).value
+            for col in range(3, ws.max_column + 1)
+        ]
+
+        # Skip completely empty rows
+        if not any(
+            value is not None and str(value).strip() != ""
+            for value in values
+        ):
+            continue
+
+        # Check if ANY cell contains UNKNOWN
+        contains_unknown = any(
+            value is not None
+            and str(value).strip().lower() == "unknown"
+            for value in values
+        )
+
+        # Action 1
+        ws.cell(row_num, 1).value = ACTION_1
+
+        # Action 2
+        ws.cell(row_num, 2).value = (
+            "Fix Environment"
+            if contains_unknown
+            else "No action"
+        )
+
+
+# -------------------------
+# Main
+# -------------------------
+
+if not INPUT_FILE.exists():
+    raise FileNotFoundError(
+        f"Input file not found: {INPUT_FILE.resolve()}"
+    )
+
+print("Opening:", INPUT_FILE.resolve())
+
+# Load original workbook
+wb = openpyxl.load_workbook(INPUT_FILE)
+
+print("Sheets:", wb.sheetnames)
+
+# Process UNIX
+process_sheet(wb["RawData_UNIX01"])
+
+# Process WINDOWS
+process_sheet(wb["RawData_WIN01"])
+
+# Summary is NOT modified
+
+# Save new workbook
+wb.save(OUTPUT_FILE)
+
+print()
+print("SUCCESS!")
+print("Created:", OUTPUT_FILE.resolve())
