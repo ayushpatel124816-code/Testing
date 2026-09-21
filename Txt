@@ -1,103 +1,308 @@
-import openpyxl
-from pathlib import Path
+// Get all rows extracted from the Summary sheet
+const rows = $input.all().map(item => item.json);
 
-INPUT_FILE = Path("excel_file.xlsx")
-OUTPUT_FILE = Path("Processed_Excel.xlsx")
+// Helper to get a cell safely
+function cell(row, key) {
+  const value = row[key];
+  return value === undefined || value === null ? "" : String(value).trim();
+}
 
-ACTION_1 = "Onboard the account in Cyberark or Delete it in Snow/DPR"
+// Convert decimal percentage to display percentage
+function formatPercent(value) {
+  if (value === "" || value === null || value === undefined) {
+    return "";
+  }
+
+  const num = Number(value);
+
+  if (!Number.isNaN(num)) {
+    // Excel extraction gives values such as 0.991976...
+    return (num * 100).toFixed(2) + "%";
+  }
+
+  return String(value);
+}
+
+// Escape HTML
+function esc(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Remove rows that are completely empty for the relevant columns
+function validRows(data, columns) {
+  return data.filter(row =>
+    columns.some(key => cell(row, key) !== "")
+  );
+}
+
+// Find the rows belonging to the Unix section
+const unixStart = rows.findIndex(row =>
+  Object.values(row).some(value =>
+    String(value ?? "").includes("INFUNIX01")
+  )
+);
+
+// Find the rows belonging to the Windows section
+const windowsStart = rows.findIndex(row =>
+  Object.values(row).some(value =>
+    String(value ?? "").includes("INFWIN01")
+  )
+);
+
+if (unixStart === -1 || windowsStart === -1) {
+  throw new Error("Could not find INFUNIX01 or INFWIN01 in Summary sheet.");
+}
+
+// Unix section ends before Windows section
+const unixRows = rows.slice(unixStart, windowsStart);
+
+// Windows section
+const windowsRows = rows.slice(windowsStart);
+
+// -----------------------------
+// UNIX ENVIRONMENT TABLE
+// -----------------------------
+
+const unixEnvRows = validRows(
+  unixRows.filter(row => {
+    const value = cell(row, "_EMPTY_2");
+    return ["DEV", "PRD", "STG", "UNKNOWN", "Total"]
+      .includes(value);
+  }),
+  ["_EMPTY_2", "_EMPTY_6", "_EMPTY_12"]
+);
+
+const unixEnvironment = unixEnvRows.map(row => ({
+  environment: cell(row, "_EMPTY_2"),
+  accounts: cell(row, "_EMPTY_6"),
+  percent: formatPercent(cell(row, "_EMPTY_12"))
+}));
+
+// -----------------------------
+// UNIX AREA TABLE
+// -----------------------------
+
+const unixAreaRows = validRows(
+  unixRows.filter(row => {
+    const value = cell(row, "_EMPTY_16");
+    return ["AMER", "APAC", "EMEA", "ISPL", "MEAA", "Total"]
+      .includes(value);
+  }),
+  ["_EMPTY_16", "_EMPTY_18", "_EMPTY_22"]
+);
+
+const unixArea = unixAreaRows.map(row => ({
+  area: cell(row, "_EMPTY_16"),
+  accounts: cell(row, "_EMPTY_18"),
+  percent: formatPercent(cell(row, "_EMPTY_22"))
+}));
+
+// -----------------------------
+// WINDOWS ENVIRONMENT TABLE
+// -----------------------------
+
+const windowsEnvRows = validRows(
+  windowsRows.filter(row => {
+    const value = cell(row, "_EMPTY_2");
+    return ["DEV", "PRD", "STG", "UNKNOWN", "Total"]
+      .includes(value);
+  }),
+  ["_EMPTY_2", "_EMPTY_7", "_EMPTY_9"]
+);
+
+const windowsEnvironment = windowsEnvRows.map(row => ({
+  environment: cell(row, "_EMPTY_2"),
+  accounts: cell(row, "_EMPTY_7"),
+  percent: formatPercent(cell(row, "_EMPTY_9"))
+}));
+
+// -----------------------------
+// WINDOWS AREA TABLE
+// -----------------------------
+
+const windowsAreaRows = validRows(
+  windowsRows.filter(row => {
+    const value = cell(row, "_EMPTY_13");
+    return ["AMER", "APAC", "EMEA", "ISPL", "MEAA", "Total"]
+      .includes(value);
+  }),
+  ["_EMPTY_13", "_EMPTY_17", "_EMPTY_21"]
+);
+
+const windowsArea = windowsAreaRows.map(row => ({
+  area: cell(row, "_EMPTY_13"),
+  accounts: cell(row, "_EMPTY_17"),
+  percent: formatPercent(cell(row, "_EMPTY_21"))
+}));
 
 
-def process_sheet(ws):
-    # Find the actual header row
-    header_row = None
+// -----------------------------
+// HTML TABLE BUILDER
+// -----------------------------
 
-    for row in ws.iter_rows():
-        for cell in row:
-            if (
-                cell.value is not None
-                and str(cell.value).strip().lower() == "pamela live status"
-            ):
-                header_row = cell.row
-                break
+function buildTable(title, headers, data, fields) {
 
-        if header_row:
-            break
+  let html = `
+    <h3 style="
+      font-family: Arial, sans-serif;
+      font-size: 15px;
+      margin-top: 20px;
+      margin-bottom: 8px;
+    ">
+      ${esc(title)}
+    </h3>
 
-    if header_row is None:
-        raise ValueError(
-            f"'PAMELA LIVE STATUS' header not found in {ws.title}"
-        )
+    <table style="
+      border-collapse: collapse;
+      width: 850px;
+      max-width: 100%;
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+      margin-bottom: 20px;
+    ">
+      <tr>
+        ${headers.map(header => `
+          <th style="
+            border: 1px solid #777;
+            padding: 7px;
+            background-color: #e8e4d5;
+            text-align: center;
+            font-weight: bold;
+          ">
+            ${esc(header)}
+          </th>
+        `).join("")}
+      </tr>
+  `;
 
-    print(f"{ws.title}: header found at row {header_row}")
+  for (const row of data) {
 
-    # Add two columns at the beginning
-    ws.insert_cols(1, 2)
+    const isTotal = String(row[fields[0]]).toLowerCase() === "total";
 
-    # Add headers
-    ws.cell(header_row, 1).value = "Action 1"
-    ws.cell(header_row, 2).value = "Action 2"
+    html += `
+      <tr>
+        ${fields.map(field => `
+          <td style="
+            border: 1px solid #777;
+            padding: 6px;
+            text-align: center;
+            ${isTotal ? "font-weight:bold;background-color:#eeeeee;" : ""}
+          ">
+            ${esc(row[field])}
+          </td>
+        `).join("")}
+      </tr>
+    `;
+  }
 
-    # Process rows below header
-    for row_num in range(header_row + 1, ws.max_row + 1):
+  html += `</table>`;
 
-        # Original data now starts from column 3
-        values = [
-            ws.cell(row_num, col).value
-            for col in range(3, ws.max_column + 1)
-        ]
-
-        # Skip completely empty rows
-        if not any(
-            value is not None and str(value).strip() != ""
-            for value in values
-        ):
-            continue
-
-        # Check if ANY cell contains UNKNOWN
-        contains_unknown = any(
-            value is not None
-            and str(value).strip().lower() == "unknown"
-            for value in values
-        )
-
-        # Action 1
-        ws.cell(row_num, 1).value = ACTION_1
-
-        # Action 2
-        ws.cell(row_num, 2).value = (
-            "Fix Environment"
-            if contains_unknown
-            else "No action"
-        )
+  return html;
+}
 
 
-# -------------------------
-# Main
-# -------------------------
+// -----------------------------
+// BUILD THE FOUR TABLES
+// -----------------------------
 
-if not INPUT_FILE.exists():
-    raise FileNotFoundError(
-        f"Input file not found: {INPUT_FILE.resolve()}"
-    )
+const unixEnvHTML = buildTable(
+  "Unix Server Native Account distribution based on Environment",
+  [
+    "AccountInvENV",
+    "Nb AccountsNotFound/TotalAccountInInventory",
+    "Percent"
+  ],
+  unixEnvironment,
+  ["environment", "accounts", "percent"]
+);
 
-print("Opening:", INPUT_FILE.resolve())
+const unixAreaHTML = buildTable(
+  "Unix Server Native Account distribution based on Area",
+  [
+    "AREA",
+    "Nb AccountsNotFound",
+    "Percent"
+  ],
+  unixArea,
+  ["area", "accounts", "percent"]
+);
 
-# Load original workbook
-wb = openpyxl.load_workbook(INPUT_FILE)
+const windowsEnvHTML = buildTable(
+  "Windows Server Native Account distribution based on Environment",
+  [
+    "ENVIRONMENT",
+    "Nb AccountsNotFound/TotalAccountInInventory",
+    "Percent"
+  ],
+  windowsEnvironment,
+  ["environment", "accounts", "percent"]
+);
 
-print("Sheets:", wb.sheetnames)
+const windowsAreaHTML = buildTable(
+  "Windows Server Native Account distribution based on Area",
+  [
+    "AREA",
+    "Nb AccountsNotFound/TotalAccountInInventory",
+    "Percent"
+  ],
+  windowsArea,
+  ["area", "accounts", "percent"]
+);
 
-# Process UNIX
-process_sheet(wb["RawData_UNIX01"])
 
-# Process WINDOWS
-process_sheet(wb["RawData_WIN01"])
+// -----------------------------
+// EMAIL BODY
+// -----------------------------
 
-# Summary is NOT modified
+const emailHTML = `
+<div style="
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  color: #222;
+">
 
-# Save new workbook
-wb.save(OUTPUT_FILE)
+  <p>Hi All,</p>
 
-print()
-print("SUCCESS!")
-print("Created:", OUTPUT_FILE.resolve())
+  <p>
+    Please find attached details for Infra Native Accounts,
+    which require your action on anomalies identified/reported:
+  </p>
+
+  <p>
+    You can refer to the column names <b>Action 1</b> and
+    <b>Action 2</b> in the attached files for the type of action
+    required on these accounts.
+  </p>
+
+  ${unixEnvHTML}
+
+  ${unixAreaHTML}
+
+  ${windowsEnvHTML}
+
+  ${windowsAreaHTML}
+
+  <p style="margin-top:25px;">
+    Thanks and Regards,
+  </p>
+
+</div>
+`;
+
+// Return one item containing the complete email content
+return [
+  {
+    json: {
+      unixEnvironment,
+      unixArea,
+      windowsEnvironment,
+      windowsArea,
+      emailHTML
+    }
+  }
+];
