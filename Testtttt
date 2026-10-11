@@ -1,0 +1,164 @@
+
+const latestItems = $("Extract from File").all();
+const olderItems1 = $("Extract from File3").all();
+const olderItems2 = $("Extract from File4").all();
+
+// Extract unique server names and their areas from a worksheet.
+function parseSheet(items) {
+  const rows = items.map(item => item.json.row || []);
+
+  // Find the header row dynamically.
+  const headerIndex = rows.findIndex(row =>
+    row.some(value =>
+      value != null &&
+      String(value).trim().toLowerCase() === "servername"
+    )
+  );
+
+  if (headerIndex === -1) {
+    throw new Error("ServerName header not found.");
+  }
+
+  const headers = rows[headerIndex].map(value =>
+    value == null ? "" : String(value).trim()
+  );
+
+  const serverIndex = headers.findIndex(
+    value => value.toLowerCase() === "servername"
+  );
+
+  const areaIndex = headers.findIndex(
+    value => value.toLowerCase() === "area"
+  );
+
+  if (serverIndex === -1 || areaIndex === -1) {
+    throw new Error("ServerName or AREA column not found.");
+  }
+
+  const servers = new Map();
+
+  for (let i = headerIndex + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const server = row[serverIndex];
+
+    if (server == null || String(server).trim() === "") {
+      continue;
+    }
+
+    const serverName = String(server).trim().toUpperCase();
+
+    // Ignore repeated headers and report-title rows.
+    if (
+      serverName === "SERVERNAME" ||
+      /^INF(?:UNIX|WIN)\d+$/i.test(serverName)
+    ) {
+      continue;
+    }
+
+    const area =
+      row[areaIndex] == null
+        ? ""
+        : String(row[areaIndex]).trim().toUpperCase();
+
+    // Count each server only once.
+    if (!servers.has(serverName)) {
+      servers.set(serverName, area);
+    }
+  }
+
+  return servers;
+}
+
+// Map areas into reporting regions.
+function regionForArea(area) {
+  const value = String(area ?? "").trim().toUpperCase();
+
+  if (value === "AMER") {
+    return "AMER";
+  }
+
+  if (["APAC", "ISPL"].includes(value)) {
+    return "APAC";
+  }
+
+  if (["EMEA", "MEAA", "MIA"].includes(value)) {
+    return "EMEA";
+  }
+
+  // UNKNOWN, NA, N/A, blank, and unexpected values.
+  return "UNMAPPED";
+}
+
+// Read all three Excel files.
+const latest = parseSheet(latestItems);
+const older1 = parseSheet(olderItems1);
+const older2 = parseSheet(olderItems2);
+
+const regions = ["AMER", "APAC", "EMEA", "UNMAPPED"];
+
+const oldCounts = {
+  AMER: 0,
+  APAC: 0,
+  EMEA: 0,
+  UNMAPPED: 0,
+};
+
+const newCounts = {
+  AMER: 0,
+  APAC: 0,
+  EMEA: 0,
+  UNMAPPED: 0,
+};
+
+// Classify servers found in the latest Excel.
+for (const [server, area] of latest.entries()) {
+  const region = regionForArea(area);
+
+  // Old = present in all three files.
+  // New = present in latest, but missing from either older file.
+  if (older1.has(server) && older2.has(server)) {
+    oldCounts[region]++;
+  } else {
+    newCounts[region]++;
+  }
+}
+
+// Build the KO summary table.
+const output = [];
+
+const grandTotal = {
+  newAccount: 0,
+  oldAccount: 0,
+  total: 0,
+};
+
+for (const region of regions) {
+  const newAccount = newCounts[region];
+  const oldAccount = oldCounts[region];
+  const total = newAccount + oldAccount;
+
+  grandTotal.newAccount += newAccount;
+  grandTotal.oldAccount += oldAccount;
+  grandTotal.total += total;
+
+  output.push({
+    json: {
+      "Row Labels": region,
+      "New Account": newAccount,
+      "Old Account": oldAccount,
+      "Grand Total": total,
+    },
+  });
+}
+
+// Final Grand Total row.
+output.push({
+  json: {
+    "Row Labels": "Grand Total",
+    "New Account": grandTotal.newAccount,
+    "Old Account": grandTotal.oldAccount,
+    "Grand Total": grandTotal.total,
+  },
+});
+
+return output;
