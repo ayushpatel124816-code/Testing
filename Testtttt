@@ -1,171 +1,267 @@
 
-const latestItems = $("Extract from File").all();
-const olderItems1 = $("Extract from File3").all();
-const olderItems2 = $("Extract from File4").all();
 
-// Normalize values for reliable comparisons
-function normalize(value) {
+function escapeHtml(value) {
   if (value === null || value === undefined) return "";
-  return String(value).trim().toUpperCase();
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
-// Map all source areas into the required KO regions
-function normalizeArea(area) {
-  const value = normalize(area);
-
-  if (value === "AMER") return "AMER";
-
-  if (["APAC", "ISPL"].includes(value)) {
-    return "APAC";
+function toPct(value) {
+  if (typeof value === "number") {
+    return (value * 100).toFixed(2) + "%";
   }
-
-  if (["EMEA", "MEAA", "MIA"].includes(value)) {
-    return "EMEA";
-  }
-
-  return "UNKNOWN";
+  return value ?? "";
 }
 
-// Extract Server Name and AREA from an extracted worksheet
-function parseSheet(items) {
-  const rows = items.map(item => item.json.row || []);
+// --------------------------------------------------
+// 1. EXISTING FOUR SUMMARY TABLES
+// Keep the same column positions as your current code.
+// --------------------------------------------------
 
-  const headerIndex = rows.findIndex(row =>
-    row.some(value =>
-      normalize(value) === "SERVER NAME"
-    )
-  );
+const unixEnvRows = items
+  .map(i => i.json)
+  .filter(o =>
+    o.__EMPTY_2 &&
+    o.__EMPTY_6 !== undefined &&
+    o.__EMPTY_12 !== undefined
+  )
+  .map(o => ({
+    env: o.__EMPTY_2,
+    nb: o.__EMPTY_6,
+    percent: toPct(o.__EMPTY_12)
+  }));
 
-  if (headerIndex === -1) {
-    throw new Error(
-      "SERVER Name header not found in one of the Windows sheets."
-    );
-  }
+const unixAreaRows = items
+  .map(i => i.json)
+  .filter(o =>
+    o.__EMPTY_16 &&
+    o.__EMPTY_18 !== undefined &&
+    o.__EMPTY_22 !== undefined
+  )
+  .map(o => ({
+    area: o.__EMPTY_16,
+    nb: o.__EMPTY_18,
+    percent: toPct(o.__EMPTY_22)
+  }));
 
-  const headers = rows[headerIndex].map(normalize);
+const winEnvRows = items
+  .map(i => i.json)
+  .filter(o =>
+    o.__EMPTY_2 &&
+    o.__EMPTY_7 !== undefined &&
+    o.__EMPTY_9 !== undefined
+  )
+  .map(o => ({
+    env: o.__EMPTY_2,
+    nb: o.__EMPTY_7,
+    percent: toPct(o.__EMPTY_9)
+  }));
 
-  const serverIndex = headers.findIndex(value =>
-    value === "SERVER NAME" || value === "SERVERNAME"
-  );
+const winAreaRows = items
+  .map(i => i.json)
+  .filter(o =>
+    o.__EMPTY_13 &&
+    o.__EMPTY_17 !== undefined &&
+    o.__EMPTY_21 !== undefined
+  )
+  .map(o => ({
+    area: o.__EMPTY_13,
+    nb: o.__EMPTY_17,
+    percent: toPct(o.__EMPTY_21)
+  }));
 
-  const areaIndex = headers.findIndex(value =>
-    value === "AREA"
-  );
+// --------------------------------------------------
+// 2. READ UNIX AND WINDOWS KO COUNT OUTPUTS
+//
+// IMPORTANT:
+// Change these two node names below if the names
+// on your n8n canvas are different.
+// --------------------------------------------------
 
-  if (serverIndex === -1 || areaIndex === -1) {
-    throw new Error(
-      "SERVER Name or AREA column not found in a Windows sheet."
-    );
-  }
+const unixKORows = $("Code in JavaScript").all().map(
+  item => item.json
+);
 
-  const records = [];
+const winKORows = $("Code in JavaScript1").all().map(
+  item => item.json
+);
 
-  for (let i = headerIndex + 1; i < rows.length; i++) {
-    const row = rows[i] || [];
-    const server = normalize(row[serverIndex]);
+// --------------------------------------------------
+// 3. HTML TABLE GENERATOR FOR SUMMARY TABLES
+// --------------------------------------------------
 
-    if (!server) continue;
+function htmlSummaryTable(rows, title, firstColumn) {
+  const headerStyle =
+    "background-color:#4a7688;color:#fff;font-weight:bold;" +
+    "padding:6px;text-align:left;font-family:Arial,sans-serif;" +
+    "font-size:12px;border:1px solid #ccc;";
 
-    // Ignore report-title rows and repeated headers
-    if (
-      /^INF(?:UNIX|WIN)\d+$/i.test(server) ||
-      server === "SERVER NAME" ||
-      server === "SERVERNAME"
-    ) {
-      continue;
-    }
+  const cellStyle =
+    "padding:5px 8px;font-family:Arial,sans-serif;" +
+    "font-size:12px;border:1px solid #ccc;";
 
-    records.push({
-      server,
-      area: normalizeArea(row[areaIndex])
-    });
-  }
+  const body = rows.map(row => `
+    <tr>
+      <td style="${cellStyle}">${escapeHtml(row[firstColumn])}</td>
+      <td style="${cellStyle}">${escapeHtml(row.nb)}</td>
+      <td style="${cellStyle}">${escapeHtml(row.percent)}</td>
+    </tr>
+  `).join("");
 
-  return records;
+  return `
+    <div style="margin-top:24px;font-family:Arial,sans-serif;">
+      <h4 style="margin-bottom:8px;color:#333;">
+        ${escapeHtml(title)}
+      </h4>
+      <table cellpadding="0" cellspacing="0"
+        style="border-collapse:collapse;border:1px solid #ccc;">
+        <thead>
+          <tr>
+            <th style="${headerStyle}">${escapeHtml(firstColumn === "env" ? "ENV" : "AREA")}</th>
+            <th style="${headerStyle}">Nb AccountsNotFound/TotalAccountInInventory</th>
+            <th style="${headerStyle}">%Not onboarded</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
 }
 
-// Parse the three Windows sheets
-const latest = parseSheet(latestItems);
-const older1 = parseSheet(olderItems1);
-const older2 = parseSheet(olderItems2);
+// --------------------------------------------------
+// 4. HTML TABLE GENERATOR FOR KO COUNT TABLES
+// --------------------------------------------------
 
-// Use sets to compare unique server names
-const latestServers = new Set(latest.map(r => r.server));
-const older1Servers = new Set(older1.map(r => r.server));
-const older2Servers = new Set(older2.map(r => r.server));
+function htmlKOTable(rows, title) {
+  const headerStyle =
+    "background-color:#138f80;color:white;padding:6px;" +
+    "font-family:Arial,sans-serif;font-size:12px;" +
+    "font-weight:bold;border:1px solid #ddd;text-align:left;";
 
-// Map each server to its latest area
-const latestAreaByServer = new Map();
+  const cellStyle =
+    "padding:5px 8px;font-family:Arial,sans-serif;" +
+    "font-size:12px;border:1px solid #ddd;";
 
-for (const record of latest) {
-  if (!latestAreaByServer.has(record.server)) {
-    latestAreaByServer.set(record.server, record.area);
-  }
+  const body = rows.map(row => `
+    <tr>
+      <td style="${cellStyle}">${escapeHtml(row["Row Labels"])}</td>
+      <td style="${cellStyle}text-align:center;">${escapeHtml(row["New Account"])}</td>
+      <td style="${cellStyle}text-align:center;">${escapeHtml(row["Old Account"])}</td>
+      <td style="${cellStyle}text-align:center;">${escapeHtml(row["Grand Total"])}</td>
+    </tr>
+  `).join("");
+
+  return `
+    <div style="margin-top:20px;font-family:Arial,sans-serif;">
+      <h4 style="margin-bottom:8px;color:#333;">
+        ${escapeHtml(title)}
+      </h4>
+      <table cellpadding="0" cellspacing="0"
+        style="border-collapse:collapse;border:1px solid #ddd;">
+        <thead>
+          <tr>
+            <th style="${headerStyle}">Row Labels</th>
+            <th style="${headerStyle}">New Account</th>
+            <th style="${headerStyle}">Old Account</th>
+            <th style="${headerStyle}">Grand Total</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
 }
 
-// Initialize the KO table
-const regions = ["AMER", "APAC", "EMEA", "UNKNOWN"];
+// --------------------------------------------------
+// 5. BUILD THE REVISED EMAIL BODY
+// --------------------------------------------------
 
-const counts = {};
+const emailBody = `
+<div style="font-family:Arial,sans-serif;color:#333;line-height:1.5;">
 
-for (const region of regions) {
-  counts[region] = {
-    newAccount: 0,
-    oldAccount: 0
-  };
-}
+  <p>Hi All,</p>
 
-// Count each unique server in the latest Excel
-for (const server of latestServers) {
-  const area = latestAreaByServer.get(server) || "UNKNOWN";
+  <p>
+    Please find attached the details for Infra Native Accounts
+    that require your action.
+  </p>
 
-  const existsInOlder1 = older1Servers.has(server);
-  const existsInOlder2 = older2Servers.has(server);
+  <p>
+    Please refer to the <b>Action 1</b> and <b>Action 2</b>
+    columns in the attached files for the required action
+    on these accounts.
+  </p>
 
-  if (existsInOlder1 && existsInOlder2) {
-    // Old account: present in all three files
-    counts[area].oldAccount++;
-  } else if (!existsInOlder1 && !existsInOlder2) {
-    // New account: present only in the latest file
-    counts[area].newAccount++;
-  }
-  // Servers present in only one older file are excluded
-  // from both categories under the current definition.
-}
+  ${htmlSummaryTable(
+    unixEnvRows,
+    "Unix Server Native Account (Root) distribution based on Environment",
+    "env"
+  )}
 
-// Build the output table
-const output = [];
+  ${htmlSummaryTable(
+    unixAreaRows,
+    "Unix Server Native Account (Root) distribution based on Area",
+    "area"
+  )}
 
-let totalNew = 0;
-let totalOld = 0;
+  ${htmlSummaryTable(
+    winEnvRows,
+    "Windows Server Native Account (ADMINISTRATORRENAMED) distribution based on Environment",
+    "env"
+  )}
 
-for (const region of regions) {
-  const newCount = counts[region].newAccount;
-  const oldCount = counts[region].oldAccount;
-  const grandTotal = newCount + oldCount;
+  ${htmlSummaryTable(
+    winAreaRows,
+    "Windows Server Native Account (ADMINISTRATORRENAMED) distribution based on Area",
+    "area"
+  )}
 
-  totalNew += newCount;
-  totalOld += oldCount;
+  <h3 style="margin-top:30px;color:#333;">
+    Last 2 months KO count:
+  </h3>
 
-  // Keep zero-count regions visible
-  output.push({
+  ${htmlKOTable(unixKORows, "UNIX01")}
+
+  ${htmlKOTable(winKORows, "WIN01")}
+
+  <p style="margin-top:30px;">
+    For assistance, kindly contact the Global Production Security
+    IT Controls Execution Team.
+  </p>
+
+  <p>
+    Timely onboarding is essential to mitigate operational risk
+    and ensure that servers remain compliant with our
+    regulatory obligations.
+  </p>
+
+  <p>
+    Thank you for your cooperation in strengthening our
+    privileged-access security posture.
+  </p>
+
+  <p>
+    Kind regards,<br>
+    IT Controls Execution Team
+  </p>
+
+  <p style="font-size:11px;color:#777;">
+    This is an automated email. Please do not reply to this message.
+  </p>
+
+</div>
+`;
+
+// Return fields used by the Send an Email node
+return [
+  {
     json: {
-      "Row Labels": region,
-      "New Account": newCount,
-      "Old Account": oldCount,
-      "Grand Total": grandTotal
+      subject: "Native Account Distribution – ENV, AREA & KO Summary",
+      body: emailBody
     }
-  });
-}
-
-// Final Grand Total row
-output.push({
-  json: {
-    "Row Labels": "Grand Total",
-    "New Account": totalNew,
-    "Old Account": totalOld,
-    "Grand Total": totalNew + totalOld
   }
-});
-
-return output;
+];
